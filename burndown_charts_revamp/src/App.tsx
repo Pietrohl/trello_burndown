@@ -1,106 +1,359 @@
-import { createSignal } from 'solid-js'
-import heroImg from './assets/hero.png'
-import solidLogo from './assets/solid.svg'
-import viteLogo from './assets/vite.svg'
+import { createEffect, createSignal, For, onCleanup, onSettled, Show } from 'solid-js'
+import { calculateBurndown, type BurndownPoint, type SprintSettings } from './history'
+import { authorize, getLists, getSprintHistory } from './trello'
+import type { ChartInstance, TrelloIframe, TrelloList } from './trello-types'
 import './App.css'
 
+const apiKey = import.meta.env.VITE_TRELLO_API_KEY
+type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'error'
+
+function today() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function addDays(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00.000Z`)
+  value.setUTCDate(value.getUTCDate() + days)
+  return value.toISOString().slice(0, 10)
+}
+
+function isSprintSettings(value: unknown): value is SprintSettings {
+  if (!value || typeof value !== 'object') return false
+  const settings = value as Partial<SprintSettings>
+  return typeof settings.startDate === 'string' && typeof settings.endDate === 'string' &&
+    typeof settings.backlogListId === 'string' && typeof settings.inProgressListId === 'string' &&
+    typeof settings.doneListId === 'string'
+}
+
+function BurndownChart(props: { points: BurndownPoint[] }) {
+  let canvas!: HTMLCanvasElement
+  let chart: ChartInstance | undefined
+
+  createEffect(() => props.points, (points) => {
+    const context = canvas?.getContext('2d')
+    if (!context || !window.Chart) return
+    chart?.destroy()
+    chart = new window.Chart(context, {
+      type: 'line',
+      data: {
+        labels: points.map(({ date }) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })),
+        datasets: [
+          {
+            label: 'Cards remaining',
+            data: points.map(({ remaining }) => remaining),
+            borderColor: '#317f70',
+            backgroundColor: 'rgba(49, 127, 112, 0.12)',
+            borderWidth: 3,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            tension: 0.25,
+            spanGaps: false,
+          },
+          {
+            label: 'Ideal burndown',
+            data: points.map(({ ideal }) => ideal),
+            borderColor: '#aab4b1',
+            borderDash: [6, 6],
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 24 } },
+          tooltip: { backgroundColor: '#192c2a', padding: 12, displayColors: false },
+        },
+        scales: {
+          x: { grid: { display: false }, border: { display: false }, ticks: { color: '#697572', maxTicksLimit: 12 } },
+          y: { beginAtZero: true, suggestedMax: Math.max(1, points[0]?.remaining ?? 0), ticks: { precision: 0, color: '#697572', stepSize: 1 }, grid: { color: '#edf0ef' }, border: { display: false } },
+        },
+      },
+    })
+  })
+
+  onCleanup(() => chart?.destroy())
+  return <div class="chart-canvas"><canvas ref={canvas} role="img" aria-label="Burndown chart of cards remaining and ideal progress over the sprint" /></div>
+}
+
 function App() {
-  const [count, setCount] = createSignal(0)
+  const [view, setView] = createSignal<View>('loading')
+  const [error, setError] = createSignal('')
+  const [t, setT] = createSignal<TrelloIframe>()
+  const [boardId, setBoardId] = createSignal('')
+  const [lists, setLists] = createSignal<TrelloList[]>([])
+  const [settings, setSettings] = createSignal<SprintSettings>()
+  const [points, setPoints] = createSignal<BurndownPoint[]>([])
+  const [saving, setSaving] = createSignal(false)
+  const [startDate, setStartDate] = createSignal(today())
+  const [endDate, setEndDate] = createSignal(addDays(today(), 14))
+  const [backlogListId, setBacklogListId] = createSignal('')
+  const [inProgressListId, setInProgressListId] = createSignal('')
+  const [doneListId, setDoneListId] = createSignal('')
+  const [loadedAt, setLoadedAt] = createSignal('')
+
+  async function loadChart(savedSettings: SprintSettings, iframe = t()) {
+    if (!iframe || !apiKey) return
+    setView('loading')
+    setSettings(savedSettings)
+    try {
+      const token = await authorize(iframe)
+      const history = await getSprintHistory(boardId(), savedSettings, token, apiKey)
+      setPoints(calculateBurndown(savedSettings, history))
+      setLoadedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+      setView('chart')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not load the burndown chart.')
+      setView('error')
+    }
+  }
+
+  async function loadBoard(iframe: TrelloIframe) {
+    if (!apiKey) {
+      setError('Add VITE_TRELLO_API_KEY to .env.local, then build and deploy the Power-Up.')
+      setView('error')
+      return
+    }
+    try {
+      const context = await iframe.getContext()
+      if (!context.board?.id) throw new Error('Open burndown_charts from a Trello board.')
+      setBoardId(context.board.id)
+      const restApi = await iframe.getRestApi()
+      if (!(await restApi.isAuthorized())) {
+        setView('authorize')
+        return
+      }
+      const token = await authorize(iframe)
+      const [boardLists, stored] = await Promise.all([
+        getLists(context.board.id, token, apiKey),
+        iframe.get('board', 'shared', 'sprintSettings'),
+      ])
+      setLists(boardLists)
+      if (isSprintSettings(stored)) {
+        setStartDate(stored.startDate)
+        setEndDate(stored.endDate)
+        setBacklogListId(stored.backlogListId)
+        setInProgressListId(stored.inProgressListId)
+        setDoneListId(stored.doneListId)
+        await loadChart(stored, iframe)
+      } else {
+        setView('setup')
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not connect to this Trello board.')
+      setView('error')
+    }
+  }
+
+  onSettled(() => {
+    const iframe = window.TrelloPowerUp?.iframe({ appKey: apiKey })
+    if (!iframe) {
+      setError('This page needs to be opened from the Burndown charts button on a Trello board.')
+      setView('error')
+      return
+    }
+    setT(iframe)
+    void loadBoard(iframe)
+  })
+
+  async function connect() {
+    const iframe = t()
+    if (!iframe) return
+    setView('loading')
+    try {
+      await authorize(iframe)
+      if (new URLSearchParams(window.location.search).has('authorize')) {
+        await iframe.closePopup()
+        return
+      }
+      await loadBoard(iframe)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Trello authorization was cancelled.')
+      setView('error')
+    }
+  }
+
+  async function refresh() {
+    const value = settings()
+    if (value) await loadChart(value)
+  }
+
+  async function saveSettings(event: SubmitEvent) {
+    event.preventDefault()
+    const iframe = t()
+    const next: SprintSettings = {
+      startDate: startDate(),
+      endDate: endDate(),
+      backlogListId: backlogListId(),
+      inProgressListId: inProgressListId(),
+      doneListId: doneListId(),
+    }
+    if (next.startDate > next.endDate) {
+      setError('The sprint end date must be on or after the start date.')
+      setView('error')
+      return
+    }
+    if (new Set([next.backlogListId, next.inProgressListId, next.doneListId]).size !== 3) {
+      setError('Choose a different Trello list for Backlog, In Progress, and Done.')
+      setView('error')
+      return
+    }
+    if (!iframe) return
+    setSaving(true)
+    try {
+      await iframe.set('board', 'shared', 'sprintSettings', next)
+      await loadChart(next, iframe)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save sprint settings. Check that you can edit this board.')
+      setView('error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function editSettings() {
+    const value = settings()
+    if (value) {
+      setStartDate(value.startDate)
+      setEndDate(value.endDate)
+      setBacklogListId(value.backlogListId)
+      setInProgressListId(value.inProgressListId)
+      setDoneListId(value.doneListId)
+    }
+    setError('')
+    setView('setup')
+  }
+
+  const latestPoint = () => [...points()].reverse().find((point) => point.remaining !== null)
+  const initialCount = () => points()[0]?.remaining ?? 0
+  const remainingCount = () => latestPoint()?.remaining ?? 0
+  const doneCount = () => Math.max(0, initialCount() - remainingCount())
+  const selectedListName = (id: string) => lists().find((list) => list.id === id)?.name ?? 'Trello list'
 
   return (
-    <>
-      <section id="center">
-        <div class="hero">
-          <img src={heroImg} class="base" width="170" height="179" alt="" />
-          <img src={solidLogo} class="framework" alt="Solid logo" />
-          <img src={viteLogo} class="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          class="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count()}
-        </button>
-      </section>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Burndown charts home">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span>burndown<span class="brand-light">_charts</span></span>
+        </a>
+        <span class="board-tag">TRELLO POWER-UP</span>
+      </header>
 
-      <div class="ticks"></div>
+      <Show when={view() === 'loading'}>
+        <section class="center-state" aria-live="polite"><span class="spinner" /><p>Loading board activity…</p></section>
+      </Show>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg class="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img class="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://solidjs.com/" target="_blank">
-                <img class="button-icon" src={solidLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg class="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg class="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg class="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg class="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg class="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <Show when={view() === 'authorize'}>
+        <section class="center-state connect-state">
+          <div class="empty-icon">↗</div>
+          <p class="eyebrow">ONE-TIME SETUP</p>
+          <h1>Connect to Trello</h1>
+          <p>Allow read-only access to this board so the chart can reconstruct card movement during the sprint.</p>
+          <button class="primary-button" onClick={connect}>Authorize read-only access</button>
+        </section>
+      </Show>
 
-      <div class="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <Show when={view() === 'setup'}>
+        <section class="setup-layout">
+          <div class="intro-copy">
+            <p class="eyebrow">SPRINT SETUP</p>
+            <h1>Choose your sprint workflow</h1>
+            <p>Select the dates and Trello lists that define this sprint. Card movement history builds the daily burndown.</p>
+          </div>
+          <form class="setup-card" onSubmit={saveSettings}>
+            <div class="form-section">
+              <h2>Sprint timeframe</h2>
+              <div class="date-grid">
+                <label>Starts<input type="date" required value={startDate()} onInput={(event) => setStartDate(event.currentTarget.value)} /></label>
+                <label>Ends<input type="date" required value={endDate()} onInput={(event) => setEndDate(event.currentTarget.value)} /></label>
+              </div>
+            </div>
+            <div class="form-section">
+              <h2>Board lists</h2>
+              <p class="form-hint">The chart counts every card in these lists until it reaches Done.</p>
+              <ListSelect label="Backlog" value={backlogListId()} lists={lists()} onChange={setBacklogListId} />
+              <ListSelect label="In Progress" value={inProgressListId()} lists={lists()} onChange={setInProgressListId} />
+              <ListSelect label="Done" value={doneListId()} lists={lists()} onChange={setDoneListId} />
+            </div>
+            <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
+            <div class="form-actions">
+              <Show when={settings()}><button type="button" class="text-button" onClick={() => setView('chart')}>Cancel</button></Show>
+              <button class="primary-button" type="submit" disabled={saving() || !lists().length}>{saving() ? 'Saving…' : 'Save sprint'}</button>
+            </div>
+          </form>
+        </section>
+      </Show>
+
+      <Show when={view() === 'chart'}>
+        <section class="dashboard">
+          <div class="dashboard-heading">
+            <div>
+              <p class="eyebrow">SPRINT BURNDOWN</p>
+              <h1>Cards remaining</h1>
+              <p class="subheading">{settings()?.startDate} <span aria-hidden="true">→</span> {settings()?.endDate}</p>
+            </div>
+            <div class="heading-actions">
+              <button class="secondary-button" onClick={editSettings}>Sprint settings</button>
+              <button class="primary-button refresh-button" onClick={refresh} aria-label="Refresh chart">↻ <span>Refresh</span></button>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <StatCard label="Remaining" value={remainingCount()} detail="Cards not in Done" tone="green" />
+            <StatCard label="Completed" value={doneCount()} detail="Since sprint start" />
+            <StatCard label="Sprint scope" value={initialCount()} detail="Cards counted from day one" />
+          </div>
+          <div class="chart-card">
+            <div class="chart-heading">
+              <div><h2>Progress over time</h2><p>Actual card count compared with an ideal pace</p></div>
+              <span class="updated-at">Updated {loadedAt()}</span>
+            </div>
+            <BurndownChart points={points()} />
+          </div>
+          <div class="workflow-note">
+            <span class="workflow-dot" aria-hidden="true"></span>
+            <p><strong>{selectedListName(settings()!.backlogListId)}</strong> → <strong>{selectedListName(settings()!.inProgressListId)}</strong> → <strong>{selectedListName(settings()!.doneListId)}</strong></p>
+            <span class="scope-note">New sprint cards are included from the start</span>
+          </div>
+        </section>
+      </Show>
+
+      <Show when={view() === 'error'}>
+        <section class="center-state error-state">
+          <div class="empty-icon">!</div>
+          <p class="eyebrow">NEEDS ATTENTION</p>
+          <h1>Couldn’t load the board</h1>
+          <p role="alert">{error()}</p>
+          <div class="form-actions">
+            <Show when={settings()}><button class="secondary-button" onClick={editSettings}>Sprint settings</button></Show>
+            <button class="primary-button" onClick={() => t() && loadBoard(t()!)}>Try again</button>
+          </div>
+        </section>
+      </Show>
+
+      <footer class="footer"><span>burndown_charts</span><span>Board data stays in Trello</span></footer>
+    </main>
   )
+}
+
+function ListSelect(props: { label: string; value: string; lists: TrelloList[]; onChange: (value: string) => void }) {
+  return (
+    <label class="select-row">
+      <span>{props.label}</span>
+      <select required value={props.value} onChange={(event) => props.onChange(event.currentTarget.value)}>
+        <option value="" disabled>Select a list</option>
+        <For each={props.lists}>{(list) => <option value={list.id}>{list.name}</option>}</For>
+      </select>
+    </label>
+  )
+}
+
+function StatCard(props: { label: string; value: number; detail: string; tone?: string }) {
+  return <article class={`stat-card ${props.tone ?? ''}`}><p>{props.label}</p><strong>{props.value}</strong><span>{props.detail}</span></article>
 }
 
 export default App

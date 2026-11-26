@@ -1,12 +1,13 @@
 {
-  "name": "burndown_charts_revamp",
+  "name": "burndown-charts",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test-reporter=spec src/history.test.mjs"
   },
   "dependencies": {
     "@solidjs/web": "^2.0.3",
