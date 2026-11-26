@@ -412,11 +412,10 @@ function ListCheckboxes(props: { label: string; value: string[]; lists: TrelloLi
       <legend>{props.label}</legend>
       <div class="list-options">
         <For each={props.lists}>{(list) => {
-          const owner = props.assignedTo(list.id)
           return <label class="list-option">
-            <input type="checkbox" checked={props.value.includes(list.id)} disabled={owner !== undefined && owner !== props.label} onChange={(event) => props.onChange(list.id, event.currentTarget.checked)} />
+            <input type="checkbox" checked={props.value.includes(list.id)} disabled={props.assignedTo(list.id) !== undefined && props.assignedTo(list.id) !== props.label} onChange={(event) => props.onChange(list.id, event.currentTarget.checked)} />
             <span>{list.name}</span>
-            <Show when={owner && owner !== props.label}><small>({owner})</small></Show>
+            <Show when={props.assignedTo(list.id) && props.assignedTo(list.id) !== props.label}><small>({props.assignedTo(list.id)})</small></Show>
           </label>
         }}</For>
       </div>
