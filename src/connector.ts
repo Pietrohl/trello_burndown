@@ -5,7 +5,7 @@ const appName = 'burndown_charts'
 const appUrl = new URL('./', window.location.href).toString()
 
 function openModal(t: TrelloIframe) {
-  return t.modal({ title: 'Burndown charts', url: appUrl, fullscreen: true })
+  return t.modal({ title: 'Burndown charts', url: t.signUrl(appUrl), fullscreen: true })
 }
 
 if (window.TrelloPowerUp && apiKey) {
@@ -19,6 +19,6 @@ if (window.TrelloPowerUp && apiKey) {
     'on-enable': openModal,
     'show-settings': openModal,
     'authorization-status': async (t) => ({ authorized: await (await t.getRestApi()).isAuthorized() }),
-    'show-authorization': (t) => t.popup({ title: 'Connect Trello', url: `${appUrl}?authorize=1`, height: 120 }),
+    'show-authorization': (t) => t.popup({ title: 'Connect Trello', url: t.signUrl(`${appUrl}?authorize=1`), height: 120 }),
   }, { appKey: apiKey, appName })
 }
