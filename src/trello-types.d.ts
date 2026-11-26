@@ -16,7 +16,7 @@ interface TrelloPowerUpGlobal {
     capabilities: Record<string, (t: TrelloIframe) => unknown>,
     options: { appKey: string; appName: string },
   ): void
-  iframe(options: { appKey: string }): TrelloIframe
+  iframe(options: { appKey: string; appName: string }): TrelloIframe
 }
 
 export interface TrelloList {
@@ -48,8 +48,7 @@ export interface TrelloAction {
 export interface TrelloIframe {
   getRestApi(): Promise<TrelloRestApi>
   signUrl(url: string): string
-  render(callback: () => void): void
-  getContext(): Promise<{ board?: { id: string } }>
+  getContext(): { board?: { id: string } }
   get(scope: 'board', visibility: 'shared', key: string): Promise<unknown>
   set(scope: 'board', visibility: 'shared', key: string, value: unknown): Promise<void>
   modal(options: { title: string; url: string; fullscreen: boolean }): Promise<void>

@@ -1,7 +1,7 @@
 import type { TrelloIframe } from './trello-types'
 
 const apiKey = import.meta.env.VITE_TRELLO_API_KEY
-const appName = 'burndown_charts'
+const appName = 'burndown_charts_revamp'
 const appUrl = new URL('./', window.location.href).toString()
 
 function openModal(t: TrelloIframe) {

@@ -6,6 +6,7 @@ import type { ChartInstance, TrelloIframe, TrelloList } from './trello-types'
 import './App.css'
 
 const apiKey = import.meta.env.VITE_TRELLO_API_KEY
+const appName = 'burndown_charts_revamp'
 const initialTimeZone = browserTimeZone()
 const timeZones = supportedTimeZones()
 type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'chart-error' | 'error'
@@ -128,7 +129,7 @@ function App() {
       return
     }
     try {
-      const context = await iframe.getContext()
+      const context = iframe.getContext()
       if (!context.board?.id) throw new Error('Open burndown_charts from a Trello board.')
       setBoardId(context.board.id)
       const restApi = await iframe.getRestApi()
@@ -168,19 +169,14 @@ function App() {
   }
 
   onSettled(() => {
-    const iframe = window.TrelloPowerUp?.iframe({ appKey: apiKey })
+    const iframe = window.TrelloPowerUp?.iframe({ appKey: apiKey, appName })
     if (!iframe) {
       setError('This page needs to be opened from the Burndown charts button on a Trello board.')
       setView('error')
       return
     }
     setT(iframe)
-    let started = false
-    iframe.render(() => {
-      if (started) return
-      started = true
-      void loadBoard(iframe)
-    })
+    void loadBoard(iframe)
   })
 
   async function connect() {
