@@ -11,6 +11,15 @@ const initialTimeZone = browserTimeZone()
 const timeZones = supportedTimeZones()
 type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'chart-error' | 'error'
 
+function diagnostic(event: string, details: Record<string, unknown> = {}) {
+  console.debug(`[${appName}] ${event}`, details)
+}
+
+function diagnosticError(event: string, error: unknown, details: Record<string, unknown> = {}) {
+  const cause = error instanceof Error ? { name: error.name, message: error.message } : { value: String(error) }
+  console.error(`[${appName}] ${event}`, { ...details, error: cause })
+}
+
 function today() {
   return dateInTimeZone(new Date(), initialTimeZone)
 }
@@ -98,8 +107,11 @@ function App() {
   async function loadChart(savedSettings: SprintSettings, iframe = t()) {
     if (!iframe || !apiKey) return false
     setView('loading')
+    let stage = 'authorize'
     try {
       const token = await authorize(iframe)
+      diagnostic('chart authorization succeeded')
+      stage = 'history'
       const history = await getSprintHistory(boardId(), savedSettings, token, apiKey)
       setPoints(calculateBurndown(savedSettings, history))
       setSettings(savedSettings)
@@ -110,12 +122,13 @@ function App() {
       setView('chart')
       return true
     } catch (cause) {
+      diagnosticError('chart load failed', cause, { stage, boardId: boardId() || undefined })
       if (cause instanceof TrelloApiError && cause.status === 401) {
         await (await iframe.getRestApi()).clearToken().catch(() => undefined)
         setError(`${savedNotice() ? 'Sprint settings were saved. ' : ''}Your Trello read authorization expired. Reconnect to continue.`)
         setView('authorize')
       } else {
-        setError(`${savedNotice() ? 'Sprint settings were saved. ' : ''}${cause instanceof Error ? cause.message : 'Could not load the burndown chart.'}`)
+        setError(`${savedNotice() ? 'Sprint settings were saved. ' : ''}Chart ${stage} failed: ${cause instanceof Error ? cause.message : 'Could not load the burndown chart.'}`)
         setView('chart-error')
       }
       return false
@@ -128,20 +141,29 @@ function App() {
       setView('error')
       return
     }
+    let stage = 'context'
     try {
       const context = iframe.getContext()
-      if (!context.board?.id) throw new Error('Open burndown_charts from a Trello board.')
+      diagnostic('context read', { keys: Object.keys(context ?? {}), hasBoard: Boolean(context?.board?.id) })
+      if (!context.board?.id) throw new Error(`Open ${appName} from a Trello board.`)
       setBoardId(context.board.id)
+      stage = 'rest-api'
       const restApi = await iframe.getRestApi()
+      diagnostic('rest api client created')
+      stage = 'authorization-status'
       if (!(await restApi.isAuthorized())) {
+        diagnostic('authorization required')
         setView('authorize')
         return
       }
+      diagnostic('authorization already present')
       const token = await authorize(iframe)
+      stage = 'board-lists'
       const [boardLists, stored] = await Promise.all([
         getLists(context.board.id, token, apiKey),
         iframe.get('board', 'shared', 'sprintSettings'),
       ])
+      diagnostic('board data loaded', { listCount: boardLists.length, hasSettings: stored != null })
       setLists(boardLists)
       const savedSettings = normalizeSprintSettings(stored)
       if (savedSettings) {
@@ -152,23 +174,26 @@ function App() {
         setBacklogListId(savedSettings.backlogListId)
         setInProgressListId(savedSettings.inProgressListId)
         setDoneListId(savedSettings.doneListId)
+        stage = 'chart'
         await loadChart(savedSettings, iframe)
       } else {
         setView('setup')
       }
     } catch (cause) {
+      diagnosticError('board load failed', cause, { stage, path: window.location.pathname })
       if (cause instanceof TrelloApiError && cause.status === 401) {
         await (await iframe.getRestApi()).clearToken().catch(() => undefined)
         setError('Your Trello read authorization expired. Reconnect to continue.')
         setView('authorize')
         return
       }
-      setError(cause instanceof Error ? cause.message : 'Could not connect to this Trello board.')
+      setError(`Board ${stage} failed: ${cause instanceof Error ? cause.message : 'Could not connect to this Trello board.'}`)
       setView('error')
     }
   }
 
   onSettled(() => {
+    diagnostic('iframe initialization started', { path: window.location.pathname, searchKeys: [...new URLSearchParams(window.location.search).keys()] })
     const iframe = window.TrelloPowerUp?.iframe({ appKey: apiKey, appName })
     if (!iframe) {
       setError('This page needs to be opened from the Burndown charts button on a Trello board.')
@@ -176,6 +201,7 @@ function App() {
       return
     }
     setT(iframe)
+    diagnostic('iframe client created')
     void loadBoard(iframe)
   })
 
