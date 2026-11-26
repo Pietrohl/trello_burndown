@@ -143,7 +143,7 @@ function App() {
     }
     let stage = 'context'
     try {
-      const context = iframe.getContext()
+      const context = await iframe.getContext()
       diagnostic('context read', { keys: Object.keys(context ?? {}), hasBoard: Boolean(context?.board?.id) })
       if (!context.board?.id) throw new Error(`Open ${appName} from a Trello board.`)
       setBoardId(context.board.id)

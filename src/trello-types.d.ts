@@ -48,7 +48,7 @@ export interface TrelloAction {
 export interface TrelloIframe {
   getRestApi(): Promise<TrelloRestApi>
   signUrl(url: string): string
-  getContext(): { board?: { id: string } }
+  getContext(): Promise<{ board?: { id: string } }>
   get(scope: 'board', visibility: 'shared', key: string): Promise<unknown>
   set(scope: 'board', visibility: 'shared', key: string, value: unknown): Promise<void>
   modal(options: { title: string; url: string; fullscreen: boolean }): Promise<void>
