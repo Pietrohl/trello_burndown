@@ -10,6 +10,12 @@ Chart.js 4.6.2 is bundled into the app from `src/vendor/chart.umd.min.js`; its u
 2. Run `npm run dev` for local development. Trello requires an HTTPS connector URL for an installed Power-Up.
 3. Run `npm test` for history, settings, and mocked Trello API tests; run `npm run build` for the production bundle.
 
+## GitHub Pages deployment
+
+The repository workflow builds and deploys `burndown_charts_revamp/dist` to GitHub Pages on every push to `main`. Add a repository Actions secret named `VITE_TRELLO_API_KEY` under Settings → Secrets and variables → Actions before the first deployment. The workflow passes that secret to Vite only during the build; no `.env` file or API key is committed.
+
+After deployment, set the Trello App Admin Iframe Connector URL to the deployed `connector.html` URL and use the deployed app URL for the Power-Up iframe pages. The API key is still embedded in the browser bundle because Vite frontend variables are public identifiers; the secret keeps it out of the repository and build configuration.
+
 The API key is a public app identifier embedded in the frontend. Trello stores each member’s read token in private Power-Up data. Authorization uses Trello’s `read` scope: the app can read boards the member can access, including cards, lists, and activity, and cannot make board changes.
 
 ## Host security headers
