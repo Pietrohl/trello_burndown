@@ -143,10 +143,10 @@ function App() {
     }
     let stage = 'context'
     try {
-      const context = await iframe.getContext()
-      diagnostic('context read', { keys: Object.keys(context ?? {}), hasBoard: Boolean(context?.board?.id) })
-      if (!context.board?.id) throw new Error(`Open ${appName} from a Trello board.`)
-      setBoardId(context.board.id)
+      const context = iframe.getContext()
+      diagnostic('context read', { keys: Object.keys(context ?? {}), hasBoard: Boolean(context?.board) })
+      if (!context.board) throw new Error(`Open ${appName} from a Trello board.`)
+      setBoardId(context.board)
       stage = 'rest-api'
       const restApi = await iframe.getRestApi()
       diagnostic('rest api client created')
@@ -160,7 +160,7 @@ function App() {
       const token = await authorize(iframe)
       stage = 'board-lists'
       const [boardLists, stored] = await Promise.all([
-        getLists(context.board.id, token, apiKey),
+        getLists(context.board, token, apiKey),
         iframe.get('board', 'shared', 'sprintSettings'),
       ])
       diagnostic('board data loaded', { listCount: boardLists.length, hasSettings: stored != null })
