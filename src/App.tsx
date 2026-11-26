@@ -175,7 +175,12 @@ function App() {
       return
     }
     setT(iframe)
-    void loadBoard(iframe)
+    let started = false
+    iframe.render(() => {
+      if (started) return
+      started = true
+      void loadBoard(iframe)
+    })
   })
 
   async function connect() {
