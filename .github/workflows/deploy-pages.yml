@@ -25,6 +25,9 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
+      - run: test -n "$VITE_TRELLO_API_KEY"
+        env:
+          VITE_TRELLO_API_KEY: ${{ secrets.VITE_TRELLO_API_KEY }}
       - run: npm run build
         env:
           VITE_TRELLO_API_KEY: ${{ secrets.VITE_TRELLO_API_KEY }}
