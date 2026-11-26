@@ -27,8 +27,8 @@ export interface TrelloList {
 export interface TrelloCard {
   id: string
   name: string
-  idList: string
-  closed: boolean
+  idList?: string | null
+  closed?: boolean
   dateLastActivity?: string
 }
 
@@ -58,4 +58,5 @@ interface TrelloRestApi {
   isAuthorized(): Promise<boolean>
   authorize(options: { scope: 'read' }): Promise<string>
   getToken(): Promise<string | null>
+  clearToken(): Promise<void>
 }

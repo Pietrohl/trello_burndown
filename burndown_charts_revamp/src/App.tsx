@@ -1,28 +1,23 @@
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from 'solid-js'
-import { calculateBurndown, type BurndownPoint, type SprintSettings } from './history'
-import { authorize, getLists, getSprintHistory } from './trello'
+import { calculateBurndown, dateInTimeZone, type BurndownPoint } from './history'
+import { browserTimeZone, normalizeSprintSettings, supportedTimeZones, validateSprintSettings, type SprintSettings } from './settings'
+import { authorize, getLists, getSprintHistory, TrelloApiError } from './trello'
 import type { ChartInstance, TrelloIframe, TrelloList } from './trello-types'
 import './App.css'
 
 const apiKey = import.meta.env.VITE_TRELLO_API_KEY
+const initialTimeZone = browserTimeZone()
+const timeZones = supportedTimeZones()
 type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'error'
 
 function today() {
-  return new Date().toISOString().slice(0, 10)
+  return dateInTimeZone(new Date(), initialTimeZone)
 }
 
 function addDays(date: string, days: number) {
   const value = new Date(`${date}T00:00:00.000Z`)
   value.setUTCDate(value.getUTCDate() + days)
   return value.toISOString().slice(0, 10)
-}
-
-function isSprintSettings(value: unknown): value is SprintSettings {
-  if (!value || typeof value !== 'object') return false
-  const settings = value as Partial<SprintSettings>
-  return typeof settings.startDate === 'string' && typeof settings.endDate === 'string' &&
-    typeof settings.backlogListId === 'string' && typeof settings.inProgressListId === 'string' &&
-    typeof settings.doneListId === 'string'
 }
 
 function BurndownChart(props: { points: BurndownPoint[] }) {
@@ -70,7 +65,7 @@ function BurndownChart(props: { points: BurndownPoint[] }) {
         },
         scales: {
           x: { grid: { display: false }, border: { display: false }, ticks: { color: '#697572', maxTicksLimit: 12 } },
-          y: { beginAtZero: true, suggestedMax: Math.max(1, points[0]?.remaining ?? 0), ticks: { precision: 0, color: '#697572', stepSize: 1 }, grid: { color: '#edf0ef' }, border: { display: false } },
+          y: { beginAtZero: true, suggestedMax: Math.max(1, points[0]?.ideal ?? 0), ticks: { precision: 0, color: '#697572', stepSize: 1 }, grid: { color: '#edf0ef' }, border: { display: false } },
         },
       },
     })
@@ -89,6 +84,7 @@ function App() {
   const [settings, setSettings] = createSignal<SprintSettings>()
   const [points, setPoints] = createSignal<BurndownPoint[]>([])
   const [saving, setSaving] = createSignal(false)
+  const [timeZone, setTimeZone] = createSignal(initialTimeZone)
   const [startDate, setStartDate] = createSignal(today())
   const [endDate, setEndDate] = createSignal(addDays(today(), 14))
   const [backlogListId, setBacklogListId] = createSignal('')
@@ -96,19 +92,27 @@ function App() {
   const [doneListId, setDoneListId] = createSignal('')
   const [loadedAt, setLoadedAt] = createSignal('')
 
-  async function loadChart(savedSettings: SprintSettings, iframe = t()) {
-    if (!iframe || !apiKey) return
+  async function loadChart(savedSettings: SprintSettings, iframe = t(), returnToSetup = false) {
+    if (!iframe || !apiKey) return false
     setView('loading')
-    setSettings(savedSettings)
     try {
       const token = await authorize(iframe)
       const history = await getSprintHistory(boardId(), savedSettings, token, apiKey)
       setPoints(calculateBurndown(savedSettings, history))
-      setLoadedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+      setSettings(savedSettings)
+      setLoadedAt(new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', timeZone: savedSettings.timeZone }).format(new Date()))
       setView('chart')
+      return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not load the burndown chart.')
-      setView('error')
+      if (cause instanceof TrelloApiError && cause.status === 401) {
+        await (await iframe.getRestApi()).clearToken().catch(() => undefined)
+        setError('Your Trello read authorization expired. Reconnect to continue.')
+        setView('authorize')
+      } else {
+        setError(cause instanceof Error ? cause.message : 'Could not load the burndown chart.')
+        setView(returnToSetup ? 'setup' : 'error')
+      }
+      return false
     }
   }
 
@@ -133,17 +137,26 @@ function App() {
         iframe.get('board', 'shared', 'sprintSettings'),
       ])
       setLists(boardLists)
-      if (isSprintSettings(stored)) {
-        setStartDate(stored.startDate)
-        setEndDate(stored.endDate)
-        setBacklogListId(stored.backlogListId)
-        setInProgressListId(stored.inProgressListId)
-        setDoneListId(stored.doneListId)
-        await loadChart(stored, iframe)
+      const savedSettings = normalizeSprintSettings(stored)
+      if (savedSettings) {
+        setSettings(savedSettings)
+        setTimeZone(savedSettings.timeZone)
+        setStartDate(savedSettings.startDate)
+        setEndDate(savedSettings.endDate)
+        setBacklogListId(savedSettings.backlogListId)
+        setInProgressListId(savedSettings.inProgressListId)
+        setDoneListId(savedSettings.doneListId)
+        await loadChart(savedSettings, iframe)
       } else {
         setView('setup')
       }
     } catch (cause) {
+      if (cause instanceof TrelloApiError && cause.status === 401) {
+        await (await iframe.getRestApi()).clearToken().catch(() => undefined)
+        setError('Your Trello read authorization expired. Reconnect to continue.')
+        setView('authorize')
+        return
+      }
       setError(cause instanceof Error ? cause.message : 'Could not connect to this Trello board.')
       setView('error')
     }
@@ -163,6 +176,7 @@ function App() {
   async function connect() {
     const iframe = t()
     if (!iframe) return
+    setError('')
     setView('loading')
     try {
       await authorize(iframe)
@@ -173,7 +187,7 @@ function App() {
       await loadBoard(iframe)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Trello authorization was cancelled.')
-      setView('error')
+      setView('authorize')
     }
   }
 
@@ -191,25 +205,22 @@ function App() {
       backlogListId: backlogListId(),
       inProgressListId: inProgressListId(),
       doneListId: doneListId(),
+      timeZone: timeZone(),
     }
-    if (next.startDate > next.endDate) {
-      setError('The sprint end date must be on or after the start date.')
-      setView('error')
-      return
-    }
-    if (new Set([next.backlogListId, next.inProgressListId, next.doneListId]).size !== 3) {
-      setError('Choose a different Trello list for Backlog, In Progress, and Done.')
-      setView('error')
+    const validationError = validateSprintSettings(next)
+    if (validationError) {
+      setError(validationError)
       return
     }
     if (!iframe) return
+    setError('')
     setSaving(true)
     try {
       await iframe.set('board', 'shared', 'sprintSettings', next)
-      await loadChart(next, iframe)
+      await loadChart(next, iframe, true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save sprint settings. Check that you can edit this board.')
-      setView('error')
+      setView('setup')
     } finally {
       setSaving(false)
     }
@@ -223,15 +234,15 @@ function App() {
       setBacklogListId(value.backlogListId)
       setInProgressListId(value.inProgressListId)
       setDoneListId(value.doneListId)
+      setTimeZone(value.timeZone)
     }
     setError('')
     setView('setup')
   }
 
   const latestPoint = () => [...points()].reverse().find((point) => point.remaining !== null)
-  const initialCount = () => points()[0]?.remaining ?? 0
+  const initialCount = () => points()[0]?.ideal ?? 0
   const remainingCount = () => latestPoint()?.remaining ?? 0
-  const doneCount = () => Math.max(0, initialCount() - remainingCount())
   const selectedListName = (id: string) => lists().find((list) => list.id === id)?.name ?? 'Trello list'
 
   return (
@@ -253,7 +264,8 @@ function App() {
           <div class="empty-icon">↗</div>
           <p class="eyebrow">ONE-TIME SETUP</p>
           <h1>Connect to Trello</h1>
-          <p>Allow read-only access to this board so the chart can reconstruct card movement during the sprint.</p>
+          <p>This Power-Up requests Trello’s read-only API permission. It can read cards, lists, and activity on boards you can access, but cannot change them.</p>
+          <Show when={error()}><p class="inline-error" role="alert">{error()}</p></Show>
           <button class="primary-button" onClick={connect}>Authorize read-only access</button>
         </section>
       </Show>
@@ -272,17 +284,21 @@ function App() {
                 <label>Starts<input type="date" required value={startDate()} onInput={(event) => setStartDate(event.currentTarget.value)} /></label>
                 <label>Ends<input type="date" required value={endDate()} onInput={(event) => setEndDate(event.currentTarget.value)} /></label>
               </div>
+              <label class="timezone-row">Sprint time zone
+                <input list="sprint-time-zones" value={timeZone()} onInput={(event) => setTimeZone(event.currentTarget.value)} placeholder="America/Sao_Paulo" />
+                <datalist id="sprint-time-zones"><For each={timeZones}>{(zone) => <option value={zone} />}</For></datalist>
+              </label>
             </div>
             <div class="form-section">
               <h2>Board lists</h2>
-              <p class="form-hint">The chart counts every card in these lists until it reaches Done.</p>
+              <p class="form-hint">Count cards while they are in Backlog or In Progress; Done is tracked separately.</p>
               <ListSelect label="Backlog" value={backlogListId()} lists={lists()} onChange={setBacklogListId} />
               <ListSelect label="In Progress" value={inProgressListId()} lists={lists()} onChange={setInProgressListId} />
               <ListSelect label="Done" value={doneListId()} lists={lists()} onChange={setDoneListId} />
             </div>
             <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
             <div class="form-actions">
-              <Show when={settings()}><button type="button" class="text-button" onClick={() => setView('chart')}>Cancel</button></Show>
+              <Show when={settings() && !error()}><button type="button" class="text-button" onClick={() => setView('chart')}>Cancel</button></Show>
               <button class="primary-button" type="submit" disabled={saving() || !lists().length}>{saving() ? 'Saving…' : 'Save sprint'}</button>
             </div>
           </form>
@@ -296,6 +312,7 @@ function App() {
               <p class="eyebrow">SPRINT BURNDOWN</p>
               <h1>Cards remaining</h1>
               <p class="subheading">{settings()?.startDate} <span aria-hidden="true">→</span> {settings()?.endDate}</p>
+              <p class="timezone-caption">All sprint days use {settings()?.timeZone}</p>
             </div>
             <div class="heading-actions">
               <button class="secondary-button" onClick={editSettings}>Sprint settings</button>
@@ -303,9 +320,9 @@ function App() {
             </div>
           </div>
           <div class="stats-grid">
-            <StatCard label="Remaining" value={remainingCount()} detail="Cards not in Done" tone="green" />
-            <StatCard label="Completed" value={doneCount()} detail="Since sprint start" />
-            <StatCard label="Sprint scope" value={initialCount()} detail="Cards counted from day one" />
+            <StatCard label="Remaining" value={remainingCount()} detail="In Backlog or In Progress" tone="green" />
+            <StatCard label="Completed" value={latestPoint()?.completed ?? 0} detail="In Done at the latest day" />
+            <StatCard label="Initial-day scope" value={initialCount()} detail="Cards in Backlog or In Progress" />
           </div>
           <div class="chart-card">
             <div class="chart-heading">
@@ -317,8 +334,9 @@ function App() {
           <div class="workflow-note">
             <span class="workflow-dot" aria-hidden="true"></span>
             <p><strong>{selectedListName(settings()!.backlogListId)}</strong> → <strong>{selectedListName(settings()!.inProgressListId)}</strong> → <strong>{selectedListName(settings()!.doneListId)}</strong></p>
-            <span class="scope-note">New sprint cards are included from the start</span>
+            <span class="scope-note">Scope changes appear on their activity dates</span>
           </div>
+          <p class="history-disclosure">History is reconstructed from activity Trello still provides. Deleted cards or unavailable activity can make past chart values incomplete.</p>
         </section>
       </Show>
 

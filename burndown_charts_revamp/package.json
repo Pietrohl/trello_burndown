@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test-reporter=spec src/history.test.mjs"
+    "test": "node --experimental-strip-types --test-reporter=spec src/all.test.mjs"
   },
   "dependencies": {
     "@solidjs/web": "^2.0.3",

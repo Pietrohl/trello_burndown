@@ -1,15 +1,30 @@
-import type { CardHistory, SprintSettings } from './history'
+import { localMidnightIso, type CardHistory, type SprintSettings } from './history.ts'
 import type { TrelloAction, TrelloCard, TrelloIframe, TrelloList } from './trello-types'
 
 const API_ROOT = 'https://api.trello.com/1'
+
+export class TrelloApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'TrelloApiError'
+    this.status = status
+  }
+}
 
 async function apiGet<T>(path: string, token: string, apiKey: string, params: Record<string, string> = {}): Promise<T> {
   const url = new URL(`${API_ROOT}${path}`)
   url.search = new URLSearchParams({ ...params, key: apiKey, token }).toString()
   const response = await fetch(url)
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new TrelloApiError(429, 'Trello is rate-limiting requests. Wait a minute, then refresh the chart.')
+    }
+    if (response.status === 401) throw new TrelloApiError(401, 'Trello authorization expired. Reconnect the Power-Up and try again.')
+    if (response.status === 403) throw new TrelloApiError(403, 'Trello denied read access. Check the Power-Up API key and your access to this board.')
     const detail = await response.text()
-    throw new Error(`Trello API error (${response.status}): ${detail || response.statusText}`)
+    throw new TrelloApiError(response.status, `Trello API error (${response.status}): ${detail || response.statusText}`)
   }
   return response.json() as Promise<T>
 }
@@ -30,7 +45,9 @@ async function fetchAll<T extends { id: string }>(
     })
     items.push(...page)
     if (page.length < 1000) return items
-    before = page[page.length - 1].id
+    const nextBefore = page[page.length - 1].id
+    if (nextBefore === before) throw new Error('Trello repeated an activity page. Refresh the chart to retry.')
+    before = nextBefore
   }
 }
 
@@ -59,32 +76,49 @@ export async function getSprintHistory(
   token: string,
   apiKey: string,
 ): Promise<CardHistory[]> {
-  const [cards, actions] = await Promise.all([
-    fetchAll<TrelloCard>(`/boards/${boardId}/cards/all`, token, apiKey, {
+  const [cardsByList, actions] = await Promise.all([
+    Promise.all([settings.backlogListId, settings.inProgressListId, settings.doneListId].map((listId) =>
+      fetchAll<TrelloCard>(`/lists/${listId}/cards`, token, apiKey, {
       filter: 'all',
       fields: 'id,name,idList,closed',
-    }),
+      }),
+    )),
     fetchAll<TrelloAction>(`/boards/${boardId}/actions`, token, apiKey, {
-      filter: 'updateCard,createCard',
-      since: `${settings.startDate}T00:00:00.000Z`,
+      filter: 'updateCard:idList,createCard,deleteCard,moveCardFromBoard,moveCardToBoard',
+      fields: 'id,date,type,data',
+      since: localMidnightIso(settings.startDate, settings.timeZone),
     }),
   ])
 
+  const cards = new Map(cardsByList.flat().map((card) => [card.id, card]))
   const createdActions = new Map<string, TrelloAction>()
   const actionsByCard = new Map<string, TrelloAction[]>()
+  const actionNames = new Map<string, string>()
   for (const action of actions) {
-    const cardId = action.data.card?.id
+    const card = action.data.card
+    const cardId = card?.id
     if (!cardId) continue
+    if (card.name) actionNames.set(cardId, card.name)
     const cardActions = actionsByCard.get(cardId) ?? []
     cardActions.push(action)
     actionsByCard.set(cardId, cardActions)
     if (action.type === 'createCard') createdActions.set(cardId, action)
   }
 
-  return cards.map((card) => ({
-    card,
-    createdAt: createdActions.get(card.id)?.date ?? new Date(Number.parseInt(card.id.slice(0, 8), 16) * 1000).toISOString(),
-    actions: actionsByCard.get(card.id) ?? [],
-  }))
+  for (const [cardId, cardActions] of actionsByCard) {
+    if (cards.has(cardId)) continue
+    const latest = [...cardActions].sort((a, b) => a.date.localeCompare(b.date)).at(-1)
+    const latestList = latest?.type === 'deleteCard' || latest?.type === 'moveCardFromBoard'
+      ? null
+      : latest?.data.listAfter?.id ?? latest?.data.list?.id ?? null
+    cards.set(cardId, { id: cardId, name: actionNames.get(cardId) ?? 'Unavailable card', idList: latestList ?? null })
+  }
+
+  return [...cards.values()].map((card) => {
+    const created = createdActions.get(card.id)?.date
+    const objectIdSeconds = Number.parseInt(card.id.slice(0, 8), 16)
+    const createdAt = created ?? (Number.isFinite(objectIdSeconds) ? new Date(objectIdSeconds * 1000).toISOString() : '')
+    return { card, createdAt, actions: actionsByCard.get(card.id) ?? [] }
+  })
 }
 

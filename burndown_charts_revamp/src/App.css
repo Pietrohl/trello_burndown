@@ -17,6 +17,7 @@ h1 { font-size: clamp(27px, 4vw, 36px); letter-spacing: -1.2px; line-height: 1.1
 h2 { font-size: 15px; letter-spacing: -.15px; margin: 0 0 4px; font-weight: 700; }
 .subheading { margin: 0; color: #788580; font-size: 13px; }
 .subheading span { padding: 0 7px; }
+.timezone-caption { color: #8a9591; font-size: 10px; margin: 5px 0 0; }
 .heading-actions { display: flex; gap: 9px; }
 .primary-button, .secondary-button, .text-button { border: 0; border-radius: 8px; min-height: 40px; padding: 0 16px; font-size: 12px; font-weight: 700; transition: background .15s, transform .15s; }
 .primary-button { color: white; background: #327f70; box-shadow: 0 2px 4px #2b74641e; }
@@ -55,6 +56,9 @@ h2 { font-size: 15px; letter-spacing: -.15px; margin: 0 0 4px; font-weight: 700;
 .date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .date-grid label, .select-row { display: grid; gap: 7px; color: #66746f; font-size: 11px; font-weight: 600; }
 .date-grid input, .select-row select { width: 100%; min-height: 39px; padding: 0 10px; border: 1px solid #dfe7e3; border-radius: 7px; color: #32443e; background-color: #fff; font-size: 12px; outline: none; }
+.timezone-row { display: grid; gap: 7px; margin-top: 13px; color: #66746f; font-size: 11px; font-weight: 600; }
+.timezone-row input { width: 100%; min-height: 39px; padding: 0 10px; border: 1px solid #dfe7e3; border-radius: 7px; color: #32443e; background: #fff; font-size: 12px; outline: none; }
+.timezone-row input:focus { border-color: #75ae9e; box-shadow: 0 0 0 3px #39877117; }
 .date-grid input:focus, .select-row select:focus { border-color: #75ae9e; box-shadow: 0 0 0 3px #39877117; }
 .select-row { grid-template-columns: 100px 1fr; align-items: center; margin-top: 9px; }
 .select-row span { color: #67756f; }
@@ -65,8 +69,10 @@ h2 { font-size: 15px; letter-spacing: -.15px; margin: 0 0 4px; font-weight: 700;
 .center-state .eyebrow { margin: 0 0 8px; }
 .center-state h1 { font-size: 27px; }
 .center-state .primary-button { margin-top: 4px; }
+.center-state .inline-error { color: #9b3935; }
 .empty-icon { width: 43px; height: 43px; display: grid; place-items: center; margin-bottom: 18px; border-radius: 14px; color: #327f70; background: #e5f2ed; font: 700 21px 'Manrope', sans-serif; }
 .error-state .empty-icon { color: #a24e49; background: #fff0ee; }
+.history-disclosure { margin: 13px 3px 0; color: #8a9591; font-size: 10px; line-height: 1.5; }
 .spinner { width: 25px; height: 25px; border: 2px solid #dce8e3; border-top-color: #358875; border-radius: 50%; animation: spin .8s linear infinite; }
 .center-state .spinner + p { margin: 12px 0 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
