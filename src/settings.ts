@@ -1,9 +1,9 @@
 export interface SprintSettings {
   startDate: string
   endDate: string
-  backlogListId: string
-  inProgressListId: string
-  doneListId: string
+  backlogListId: string[]
+  inProgressListId: string[]
+  doneListId: string[]
   timeZone: string
 }
 
@@ -23,17 +23,23 @@ export function isValidTimeZone(timeZone: string) {
 export function normalizeSprintSettings(value: unknown): SprintSettings | undefined {
   if (!value || typeof value !== 'object') return undefined
   const stored = value as Partial<SprintSettings>
-  if (typeof stored.startDate !== 'string' || typeof stored.endDate !== 'string' ||
-    typeof stored.backlogListId !== 'string' || typeof stored.inProgressListId !== 'string' ||
-    typeof stored.doneListId !== 'string') return undefined
+  if (typeof stored.startDate !== 'string' || typeof stored.endDate !== 'string') return undefined
+  const listIds = (value: unknown) => {
+    if (typeof value === 'string') return value ? [value] : []
+    return Array.isArray(value) && value.every((id) => typeof id === 'string') ? value : undefined
+  }
+  const backlogListId = listIds(stored.backlogListId)
+  const inProgressListId = listIds(stored.inProgressListId)
+  const doneListId = listIds(stored.doneListId)
+  if (!backlogListId || !inProgressListId || !doneListId) return undefined
   const timeZone = typeof stored.timeZone === 'string' ? stored.timeZone : 'UTC'
   if (!isValidTimeZone(timeZone)) return undefined
   const normalized = {
     startDate: stored.startDate,
     endDate: stored.endDate,
-    backlogListId: stored.backlogListId,
-    inProgressListId: stored.inProgressListId,
-    doneListId: stored.doneListId,
+    backlogListId,
+    inProgressListId,
+    doneListId,
     timeZone,
   }
   return validateSprintSettings(normalized) ? undefined : normalized
@@ -50,9 +56,10 @@ export function validateSprintSettings(settings: SprintSettings) {
   }
   if (settings.startDate > settings.endDate) return 'The sprint end date must be on or after the start date.'
   if (!isValidTimeZone(settings.timeZone)) return 'Enter a valid IANA time zone, such as America/Sao_Paulo.'
-  if (!settings.backlogListId || !settings.inProgressListId || !settings.doneListId ||
-    new Set([settings.backlogListId, settings.inProgressListId, settings.doneListId]).size !== 3) {
-    return 'Choose a different Trello list for Backlog, In Progress, and Done.'
+  const selected = [...settings.backlogListId, ...settings.inProgressListId, ...settings.doneListId]
+  if (!settings.backlogListId.length || !settings.inProgressListId.length || !settings.doneListId.length ||
+    new Set(selected).size !== selected.length) {
+    return 'Choose at least one list per category, with each Trello list assigned only once.'
   }
   return ''
 }

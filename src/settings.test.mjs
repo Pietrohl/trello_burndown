@@ -4,7 +4,7 @@ import { browserTimeZone, normalizeSprintSettings, validateSprintSettings } from
 
 const base = {
   startDate: '2026-10-01', endDate: '2026-10-14',
-  backlogListId: 'backlog', inProgressListId: 'doing', doneListId: 'done',
+  backlogListId: ['backlog'], inProgressListId: ['doing'], doneListId: ['done'],
 }
 
 test('keeps existing sprints in UTC when no time zone was stored', () => {
@@ -26,5 +26,11 @@ test('validates setup drafts without mutating entered values', () => {
 test('accepts an IANA time zone and rejects duplicate lists', () => {
   const valid = { ...base, timeZone: 'America/Sao_Paulo' }
   assert.equal(validateSprintSettings(valid), '')
-  assert.match(validateSprintSettings({ ...valid, doneListId: 'doing' }), /different Trello list/)
+  assert.match(validateSprintSettings({ ...valid, doneListId: ['doing'] }), /only once/)
+})
+
+test('accepts multiple lists per sprint category and normalizes legacy single lists', () => {
+  const multi = { ...base, backlogListId: ['ideas', 'backlog'], inProgressListId: ['doing', 'review'], timeZone: 'UTC' }
+  assert.equal(validateSprintSettings(multi), '')
+  assert.deepEqual(normalizeSprintSettings(base).backlogListId, ['backlog'])
 })

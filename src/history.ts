@@ -94,10 +94,11 @@ export function calculateBurndown(
   today = dateInTimeZone(new Date(), settings.timeZone),
 ): BurndownPoint[] {
   const { startDate, endDate, backlogListId, inProgressListId, doneListId, timeZone } = settings
-  if (!backlogListId || !inProgressListId || !doneListId || startDate > endDate || !isValidTimeZone(timeZone)) return []
+  if (!backlogListId.length || !inProgressListId.length || !doneListId.length || startDate > endDate || !isValidTimeZone(timeZone)) return []
 
-  const remainingLists = new Set([backlogListId, inProgressListId])
-  const sprintLists = new Set([...remainingLists, doneListId])
+  const remainingLists = new Set([...backlogListId, ...inProgressListId])
+  const doneLists = new Set(doneListId)
+  const sprintLists = new Set([...remainingLists, ...doneLists])
   const dates: string[] = []
   for (let date = startDate; date <= endDate; date = addCalendarDay(date)) dates.push(date)
   const remainingCounts = dates.map(() => 0)
@@ -154,7 +155,7 @@ export function calculateBurndown(
     for (let index = 0; index < dates.length; index++) {
       while (moveIndex < sprintMoves.length && dateInTimeZone(new Date(sprintMoves[moveIndex].date), timeZone) <= dates[index]) {
         const next = sprintMoves[moveIndex]
-        if (next.toListId === doneListId && next.fromListId !== doneListId) enteredDone = true
+        if (doneLists.has(next.toListId ?? '') && !doneLists.has(next.fromListId ?? '')) enteredDone = true
         listId = next.toListId
         moveIndex++
       }
@@ -163,7 +164,7 @@ export function calculateBurndown(
         archiveIndex++
       }
       remainingCounts[index] += Number(!archived && remainingLists.has(listId ?? ''))
-      completedCounts[index] += Number(listId === doneListId && enteredDone)
+      completedCounts[index] += Number(doneLists.has(listId ?? '') && enteredDone)
     }
   }
 

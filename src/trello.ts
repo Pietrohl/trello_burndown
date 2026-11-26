@@ -77,12 +77,12 @@ export async function getSprintHistory(
   apiKey: string,
 ): Promise<CardHistory[]> {
   const [cardsByList, actions] = await Promise.all([
-    Promise.all([settings.backlogListId, settings.inProgressListId, settings.doneListId].map((listId) =>
+    Promise.all([...settings.backlogListId, ...settings.inProgressListId, ...settings.doneListId].map((listId) =>
       fetchAll<TrelloCard>(`/lists/${listId}/cards`, token, apiKey, {
       filter: 'all',
       fields: 'id,name,idList,closed',
       }),
-    )),
+    )).then((groups) => groups.flat()),
     fetchAll<TrelloAction>(`/boards/${boardId}/actions`, token, apiKey, {
       filter: 'updateCard:idList,updateCard:closed,createCard,copyCard,deleteCard,moveCardFromBoard,moveCardToBoard',
       fields: 'id,date,type,data',
@@ -90,7 +90,7 @@ export async function getSprintHistory(
     }),
   ])
 
-  const cards = new Map(cardsByList.flat().map((card) => [card.id, card]))
+  const cards = new Map(cardsByList.map((card) => [card.id, card]))
   const createdActions = new Map<string, TrelloAction>()
   const actionsByCard = new Map<string, TrelloAction[]>()
   const actionNames = new Map<string, string>()

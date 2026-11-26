@@ -5,9 +5,9 @@ import { calculateBurndown, dateInTimeZone, localMidnightIso, sprintIsProjected 
 const settings = {
   startDate: '2026-10-01',
   endDate: '2026-10-04',
-  backlogListId: 'backlog',
-  inProgressListId: 'doing',
-  doneListId: 'done',
+  backlogListId: ['backlog'],
+  inProgressListId: ['doing'],
+  doneListId: ['done'],
   timeZone: 'UTC',
 }
 

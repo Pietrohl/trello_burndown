@@ -5,7 +5,7 @@ import { authorize, getLists, getSprintHistory, TrelloApiError } from './trello.
 
 const settings = {
   startDate: '2026-10-01', endDate: '2026-10-04',
-  backlogListId: 'backlog', inProgressListId: 'doing', doneListId: 'done', timeZone: 'America/Los_Angeles',
+  backlogListId: ['backlog'], inProgressListId: ['doing'], doneListId: ['done'], timeZone: 'America/Los_Angeles',
 }
 
 function response(body, status = 200) {

@@ -97,9 +97,9 @@ function App() {
   const [timeZone, setTimeZone] = createSignal(initialTimeZone)
   const [startDate, setStartDate] = createSignal(today())
   const [endDate, setEndDate] = createSignal(addDays(today(), 14))
-  const [backlogListId, setBacklogListId] = createSignal('')
-  const [inProgressListId, setInProgressListId] = createSignal('')
-  const [doneListId, setDoneListId] = createSignal('')
+  const [backlogListId, setBacklogListId] = createSignal<string[]>([])
+  const [inProgressListId, setInProgressListId] = createSignal<string[]>([])
+  const [doneListId, setDoneListId] = createSignal<string[]>([])
   const [loadedAt, setLoadedAt] = createSignal('')
   const [savedNotice, setSavedNotice] = createSignal(false)
   const [projected, setProjected] = createSignal(false)
@@ -278,7 +278,8 @@ function App() {
   const latestPoint = () => [...points()].reverse().find((point) => point.remaining !== null)
   const initialCount = () => points()[0]?.ideal ?? 0
   const remainingCount = () => latestPoint()?.remaining ?? 0
-  const selectedListName = (id: string) => lists().find((list) => list.id === id)?.name ?? 'Trello list'
+  const selectedListNames = (ids: string[]) => ids.map((id) => lists().find((list) => list.id === id)?.name ?? 'Trello list').join(', ')
+  const assignedTo = (id: string) => backlogListId().includes(id) ? 'Backlog' : inProgressListId().includes(id) ? 'In Progress' : doneListId().includes(id) ? 'Done' : undefined
 
   return (
     <main class="app-shell">
@@ -327,9 +328,9 @@ function App() {
             <div class="form-section">
               <h2>Board lists</h2>
               <p class="form-hint">Count cards while they are in Backlog or In Progress; Done is tracked separately.</p>
-              <ListSelect label="Backlog" value={backlogListId()} lists={lists()} onChange={setBacklogListId} />
-              <ListSelect label="In Progress" value={inProgressListId()} lists={lists()} onChange={setInProgressListId} />
-              <ListSelect label="Done" value={doneListId()} lists={lists()} onChange={setDoneListId} />
+              <ListCheckboxes label="Backlog" value={backlogListId()} lists={lists()} assignedTo={assignedTo} onChange={(id, checked) => setBacklogListId((current) => checked ? [...current, id] : current.filter((value) => value !== id))} />
+              <ListCheckboxes label="In Progress" value={inProgressListId()} lists={lists()} assignedTo={assignedTo} onChange={(id, checked) => setInProgressListId((current) => checked ? [...current, id] : current.filter((value) => value !== id))} />
+              <ListCheckboxes label="Done" value={doneListId()} lists={lists()} assignedTo={assignedTo} onChange={(id, checked) => setDoneListId((current) => checked ? [...current, id] : current.filter((value) => value !== id))} />
             </div>
             <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
             <div class="form-actions">
@@ -368,7 +369,7 @@ function App() {
           </div>
           <div class="workflow-note">
             <span class="workflow-dot" aria-hidden="true"></span>
-            <p><strong>{selectedListName(settings()!.backlogListId)}</strong> → <strong>{selectedListName(settings()!.inProgressListId)}</strong> → <strong>{selectedListName(settings()!.doneListId)}</strong></p>
+            <p><strong>{selectedListNames(settings()!.backlogListId)}</strong> → <strong>{selectedListNames(settings()!.inProgressListId)}</strong> → <strong>{selectedListNames(settings()!.doneListId)}</strong></p>
             <span class="scope-note">Scope changes appear on their activity dates</span>
           </div>
           <p class="history-disclosure">History is reconstructed from activity Trello still provides. Deleted cards or unavailable activity can make past chart values incomplete.</p>
@@ -405,15 +406,21 @@ function App() {
   )
 }
 
-function ListSelect(props: { label: string; value: string; lists: TrelloList[]; onChange: (value: string) => void }) {
+function ListCheckboxes(props: { label: string; value: string[]; lists: TrelloList[]; assignedTo: (id: string) => string | undefined; onChange: (id: string, checked: boolean) => void }) {
   return (
-    <label class="select-row">
-      <span>{props.label}</span>
-      <select required value={props.value} onChange={(event) => props.onChange(event.currentTarget.value)}>
-        <option value="" disabled>Select a list</option>
-        <For each={props.lists}>{(list) => <option value={list.id}>{list.name}</option>}</For>
-      </select>
-    </label>
+    <fieldset class="list-group">
+      <legend>{props.label}</legend>
+      <div class="list-options">
+        <For each={props.lists}>{(list) => {
+          const owner = props.assignedTo(list.id)
+          return <label class="list-option">
+            <input type="checkbox" checked={props.value.includes(list.id)} disabled={owner !== undefined && owner !== props.label} onChange={(event) => props.onChange(list.id, event.currentTarget.checked)} />
+            <span>{list.name}</span>
+            <Show when={owner && owner !== props.label}><small>({owner})</small></Show>
+          </label>
+        }}</For>
+      </div>
+    </fieldset>
   )
 }
 
