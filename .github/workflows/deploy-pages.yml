@@ -23,17 +23,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: burndown_charts_revamp/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
-        working-directory: burndown_charts_revamp
       - run: npm run build
-        working-directory: burndown_charts_revamp
         env:
           VITE_TRELLO_API_KEY: ${{ secrets.VITE_TRELLO_API_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: burndown_charts_revamp/dist
+          path: dist
 
   deploy:
     needs: build
