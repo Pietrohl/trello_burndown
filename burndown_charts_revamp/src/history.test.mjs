@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { calculateBurndown, dateInTimeZone, localMidnightIso } from './history.ts'
+import { calculateBurndown, dateInTimeZone, localMidnightIso, sprintIsProjected } from './history.ts'
 
 const settings = {
   startDate: '2026-10-01',
@@ -11,8 +11,8 @@ const settings = {
   timeZone: 'UTC',
 }
 
-function card(id, idList, actions = [], createdAt = '2026-09-20T12:00:00.000Z') {
-  return { card: { id, name: id, idList, closed: false }, createdAt, actions }
+function card(id, idList, actions = [], createdAt = '2026-09-20T12:00:00.000Z', closed = false) {
+  return { card: { id, name: id, idList, closed }, createdAt, actions }
 }
 
 function move(id, date, from, to) {
@@ -37,10 +37,29 @@ test('adds a new card to scope on its creation day', () => {
   assert.deepEqual(result.map(({ remaining }) => remaining), [0, 0, 1, 1])
 })
 
+test('reconstructs copied cards and cards created directly in Done', () => {
+  const creation = (id, type, list) => ({ id: `${id}-create`, date: '2026-10-02T10:00:00.000Z', type, data: { card: { id }, list: { id: list } } })
+  const createdAt = '2026-10-02T10:00:00.000Z'
+  const cards = [
+    card('copy', 'backlog', [creation('copy', 'copyCard', 'backlog')], createdAt),
+    card('moved-copy', 'done', [creation('moved-copy', 'copyCard', 'backlog'), move('done', '2026-10-03T10:00:00.000Z', 'backlog', 'done')], createdAt),
+    card('created-done', 'done', [creation('created-done', 'createCard', 'done')], createdAt),
+  ]
+  const result = calculateBurndown(settings, cards, '2026-10-04')
+  assert.deepEqual(result.map(({ remaining }) => remaining), [0, 2, 1, 1])
+  assert.deepEqual(result.map(({ completed }) => completed), [0, 1, 2, 2])
+})
+
 test('retains the initial-day scope for a sprint that has not started yet', () => {
   const result = calculateBurndown(settings, [card('future-card', 'backlog')], '2026-09-30')
   assert.equal(result[0].remaining, null)
   assert.equal(result[0].ideal, 1)
+})
+
+test('switches projections on the start date in the sprint time zone', () => {
+  const sprint = { ...settings, timeZone: 'America/Los_Angeles' }
+  assert.equal(sprintIsProjected(sprint, new Date('2026-10-01T06:59:59Z')), true)
+  assert.equal(sprintIsProjected(sprint, new Date('2026-10-01T07:00:00Z')), false)
 })
 
 test('counts distinct completed cards only while Done and after entering Done this sprint', () => {
@@ -52,6 +71,27 @@ test('counts distinct completed cards only while Done and after entering Done th
   const result = calculateBurndown(settings, [history], '2026-10-04')
   assert.deepEqual(result.map(({ remaining }) => remaining), [1, 0, 1, 0])
   assert.deepEqual(result.map(({ completed }) => completed), [0, 1, 0, 1])
+})
+
+test('excludes archived days, counts restored work again, and preserves Done credit while archived', () => {
+  const archive = (id, date, closed) => ({ id, date, type: 'updateCard', data: { card: { id: 'card', closed } } })
+  const history = card('card', 'done', [
+    move('complete', '2026-10-01T10:00:00.000Z', 'backlog', 'done'),
+    archive('archive-done', '2026-10-02T10:00:00.000Z', true),
+    archive('restore-done', '2026-10-03T10:00:00.000Z', false),
+    move('restore-to-work', '2026-10-03T11:00:00.000Z', 'done', 'doing'),
+    archive('archive-work', '2026-10-04T10:00:00.000Z', true),
+  ], '2026-09-20T12:00:00.000Z', true)
+  const result = calculateBurndown(settings, [history], '2026-10-04')
+  assert.deepEqual(result.map(({ remaining }) => remaining), [0, 0, 1, 0])
+  assert.deepEqual(result.map(({ completed }) => completed), [1, 1, 0, 0])
+})
+
+test('restores a card archived before the sprint and counts it from the restore day', () => {
+  const history = card('old-card', 'backlog', [
+    { id: 'restore', date: '2026-10-02T10:00:00.000Z', type: 'updateCard', data: { card: { id: 'old-card', closed: false } } },
+  ], '2026-09-20T12:00:00.000Z')
+  assert.deepEqual(calculateBurndown(settings, [history], '2026-10-04').map(({ remaining }) => remaining), [0, 1, 1, 1])
 })
 
 test('uses activity when the current card is unavailable', () => {

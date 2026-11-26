@@ -6,7 +6,7 @@ Chart.js 4.6.2 is bundled into the app from `src/vendor/chart.umd.min.js`; its u
 
 ## Local development and build
 
-1. Copy `.env.example` to `.env.local` and set `VITE_TRELLO_API_KEY` to the key generated for this Power-Up in Trello app admin.
+1. Create the local environment file with `cp .env.example .env.local`, then set `VITE_TRELLO_API_KEY` in `.env.local` to the key generated for this Power-Up in Trello app admin.
 2. Run `npm run dev` for local development. Trello requires an HTTPS connector URL for an installed Power-Up.
 3. Run `npm test` for history, settings, and mocked Trello API tests; run `npm run build` for the production bundle.
 
@@ -34,7 +34,9 @@ Keep `frame-ancestors` in the HTTP response header; it is not supported in a CSP
 - New board settings default to the browser’s time zone. Older saved settings without a time zone are interpreted as UTC until edited.
 - Days, API query boundaries, activity timestamps, and “today” use the saved zone, including daylight-saving transitions.
 - Remaining counts cards only while they are in Backlog or In Progress. Activity entering or leaving those lists changes scope on that local calendar day.
-- Completed counts distinct sprint cards currently in Done at the latest displayed day, if they entered Done during the sprint. Reopened cards stop counting until they return to Done.
+- Archived cards are excluded from Remaining while archived, count again after restoration to Backlog or In Progress, and keep Completed credit while they remain in Done.
+- Before the sprint starts, initial-day scope and the ideal line are projections based on the current board state.
+- Completed counts distinct sprint cards currently in Done at the latest displayed day, if they entered Done during the sprint, including cards created directly in Done. Reopened cards stop counting until they return to Done.
 - History is reconstructed from Trello’s available activity, including relevant cards that have left the board. Trello may no longer provide deleted or older activity, so historical values can be incomplete; the app does not create snapshots.
 
 ## Install on a board
@@ -43,4 +45,6 @@ Keep `frame-ancestors` in the HTTP response header; it is not supported in a CSP
 2. Generate its Trello API key, set it in `.env.local`, build, and deploy the contents of `dist/` to a static HTTPS host with the CSP above.
 3. Enable the custom Power-Up on a board in that Workspace and configure the sprint.
 
-For a live-board smoke check, authorize read access, configure a short sprint, move a card through Backlog → In Progress → Done, reopen it, and move a second card to another board. Confirm daily scope and completion counts update after refresh. Public directory publication requires separate Trello review.
+Before release, inspect the deployed HTTP `Content-Security-Policy` response header for both `connector.html` and the app page, and verify it matches the required policy above, including `frame-ancestors`.
+
+For a live-board smoke check, authorize read access, configure a short sprint, copy a card into Backlog, move it to Done, and confirm its scope and completion in the chart after refresh. Also reopen a card and move a second card to another board. Confirm daily scope and completion counts update after refresh. Public directory publication requires separate Trello review.

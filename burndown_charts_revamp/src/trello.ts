@@ -84,7 +84,7 @@ export async function getSprintHistory(
       }),
     )),
     fetchAll<TrelloAction>(`/boards/${boardId}/actions`, token, apiKey, {
-      filter: 'updateCard:idList,createCard,deleteCard,moveCardFromBoard,moveCardToBoard',
+      filter: 'updateCard:idList,updateCard:closed,createCard,copyCard,deleteCard,moveCardFromBoard,moveCardToBoard',
       fields: 'id,date,type,data',
       since: localMidnightIso(settings.startDate, settings.timeZone),
     }),
@@ -102,7 +102,7 @@ export async function getSprintHistory(
     const cardActions = actionsByCard.get(cardId) ?? []
     cardActions.push(action)
     actionsByCard.set(cardId, cardActions)
-    if (action.type === 'createCard') createdActions.set(cardId, action)
+    if (action.type === 'createCard' || action.type === 'copyCard') createdActions.set(cardId, action)
   }
 
   for (const [cardId, cardActions] of actionsByCard) {
@@ -110,8 +110,13 @@ export async function getSprintHistory(
     const latest = [...cardActions].sort((a, b) => a.date.localeCompare(b.date)).at(-1)
     const latestList = latest?.type === 'deleteCard' || latest?.type === 'moveCardFromBoard'
       ? null
-      : latest?.data.listAfter?.id ?? latest?.data.list?.id ?? null
-    cards.set(cardId, { id: cardId, name: actionNames.get(cardId) ?? 'Unavailable card', idList: latestList ?? null })
+      : latest?.data.listAfter?.id ?? latest?.data.listBefore?.id ?? latest?.data.list?.id ?? null
+    cards.set(cardId, {
+      id: cardId,
+      name: actionNames.get(cardId) ?? 'Unavailable card',
+      idList: latestList ?? null,
+      closed: latest?.data.card?.closed,
+    })
   }
 
   return [...cards.values()].map((card) => {

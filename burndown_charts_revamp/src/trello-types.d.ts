@@ -36,8 +36,9 @@ export interface TrelloAction {
   id: string
   date: string
   type: string
+  displayKey?: string
   data: {
-    card?: { id: string; name?: string }
+    card?: { id: string; name?: string; closed?: boolean }
     list?: { id: string }
     listBefore?: { id: string }
     listAfter?: { id: string }

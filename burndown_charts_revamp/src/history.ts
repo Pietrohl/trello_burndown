@@ -34,6 +34,10 @@ export function dateInTimeZone(date: Date, timeZone: string) {
   return `${part('year')}-${part('month')}-${part('day')}`
 }
 
+export function sprintIsProjected(settings: SprintSettings, now = new Date()) {
+  return dateInTimeZone(now, settings.timeZone) < settings.startDate
+}
+
 function addCalendarDay(date: string) {
   const value = new Date(`${date}T00:00:00.000Z`)
   value.setUTCDate(value.getUTCDate() + 1)
@@ -64,7 +68,7 @@ function movement(action: TrelloAction): Movement | undefined {
   if (action.type === 'updateCard' && data.listBefore && data.listAfter) {
     return { id: action.id, date: action.date, fromListId: data.listBefore.id, toListId: data.listAfter.id }
   }
-  if (action.type === 'createCard') {
+  if (action.type === 'createCard' || action.type === 'copyCard') {
     return { id: action.id, date: action.date, fromListId: null, toListId: data.list?.id ?? null }
   }
   if (action.type === 'moveCardFromBoard' || action.type === 'deleteCard') {
@@ -73,6 +77,14 @@ function movement(action: TrelloAction): Movement | undefined {
   if (action.type === 'moveCardToBoard') {
     return { id: action.id, date: action.date, fromListId: null, toListId: data.listAfter?.id ?? data.list?.id ?? null }
   }
+  return undefined
+}
+
+function archiveChange(action: TrelloAction) {
+  if (action.type !== 'updateCard') return undefined
+  if (typeof action.data.card?.closed === 'boolean') return action.data.card.closed
+  if (action.displayKey === 'action_archived_card') return true
+  if (action.displayKey === 'action_unarchived_card') return false
   return undefined
 }
 
@@ -116,14 +128,29 @@ export function calculateBurndown(
       const date = dateInTimeZone(new Date(move.date), timeZone)
       return date >= startDate && date <= endDate
     })
+    const archiveActions = item.actions
+      .map((action) => ({ action, closed: archiveChange(action) }))
+      .filter((value): value is { action: TrelloAction; closed: boolean } => value.closed !== undefined)
+      .sort((a, b) => a.action.date.localeCompare(b.action.date) || a.action.id.localeCompare(b.action.id))
+    let archived = item.card.closed === true
+    for (const { action, closed } of [...archiveActions].reverse()) {
+      if (dateInTimeZone(new Date(action.date), timeZone) > endDate) archived = !closed
+    }
+    let archivedAtStart = archived
+    for (const { action, closed } of [...archiveActions].reverse()) {
+      const date = dateInTimeZone(new Date(action.date), timeZone)
+      if (date >= startDate && date <= endDate) archivedAtStart = !closed
+    }
     const relevant = sprintLists.has(listAtStart ?? '') || sprintMoves.some((move) =>
       sprintLists.has(move.fromListId ?? '') || sprintLists.has(move.toListId ?? ''),
     )
     if (!relevant) continue
 
     let listId = createdOn >= startDate && createdOn <= endDate ? null : listAtStart
+    archived = createdOn >= startDate && createdOn <= endDate ? false : archivedAtStart
     let enteredDone = false
     let moveIndex = 0
+    let archiveIndex = 0
     for (let index = 0; index < dates.length; index++) {
       while (moveIndex < sprintMoves.length && dateInTimeZone(new Date(sprintMoves[moveIndex].date), timeZone) <= dates[index]) {
         const next = sprintMoves[moveIndex]
@@ -131,7 +158,11 @@ export function calculateBurndown(
         listId = next.toListId
         moveIndex++
       }
-      remainingCounts[index] += Number(remainingLists.has(listId ?? ''))
+      while (archiveIndex < archiveActions.length && dateInTimeZone(new Date(archiveActions[archiveIndex].action.date), timeZone) <= dates[index]) {
+        archived = archiveActions[archiveIndex].closed
+        archiveIndex++
+      }
+      remainingCounts[index] += Number(!archived && remainingLists.has(listId ?? ''))
       completedCounts[index] += Number(listId === doneListId && enteredDone)
     }
   }

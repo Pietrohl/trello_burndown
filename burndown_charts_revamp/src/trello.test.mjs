@@ -65,6 +65,55 @@ test('reconstructs a card from activity after it leaves the board', async () => 
   assert.equal(calls.filter((url) => url.pathname.endsWith('/cards')).length, 3)
 })
 
+test('requests and reconstructs copy and direct Done creation activity', async () => {
+  const create = (id, type, list) => ({ id: `${id}-action`, date: '2026-10-02T10:00:00.000Z', type, data: { card: { id, name: id }, list: { id: list } } })
+  const actions = [
+    create('copy-stays', 'copyCard', 'backlog'),
+    create('copy-moves', 'copyCard', 'backlog'),
+    create('created-done', 'createCard', 'done'),
+    { id: 'move', date: '2026-10-03T10:00:00.000Z', type: 'updateCard', data: { card: { id: 'copy-moves' }, listBefore: { id: 'backlog' }, listAfter: { id: 'done' } } },
+  ]
+  await withFetch(async (input) => {
+    const url = new URL(input)
+    if (url.pathname.endsWith('/cards')) return response([])
+    assert.ok(url.searchParams.get('filter').split(',').includes('copyCard'))
+    return response(actions)
+  }, async () => {
+    const history = await getSprintHistory('board', { ...settings, timeZone: 'UTC' }, 'token', 'key')
+    assert.equal(history.find(({ card }) => card.id === 'copy-stays').createdAt, '2026-10-02T10:00:00.000Z')
+    const points = calculateBurndown({ ...settings, timeZone: 'UTC' }, history, '2026-10-04')
+    assert.deepEqual(points.map(({ remaining }) => remaining), [0, 2, 1, 1])
+    assert.deepEqual(points.map(({ completed }) => completed), [0, 1, 2, 2])
+  })
+})
+
+test('requests archive and restore activity and preserves archived card state', async () => {
+  const cardId = '507f1f77bcf86cd799439011'
+  await withFetch(async (input) => {
+    const url = new URL(input)
+    if (url.pathname.endsWith('/cards')) return response([{ id: cardId, name: 'Archived', idList: 'backlog', closed: true }])
+    assert.match(url.searchParams.get('filter'), /updateCard:closed/)
+    return response([{ id: 'restore', date: '2026-10-02T10:00:00.000Z', type: 'updateCard', data: { card: { id: cardId, closed: false } } }])
+  }, async () => {
+    const history = await getSprintHistory('board', { ...settings, timeZone: 'UTC' }, 'token', 'key')
+    assert.equal(history[0].card.closed, true)
+    assert.equal(history[0].actions[0].data.card.closed, false)
+  })
+})
+
+test('reconstructs the list for an archived card that is no longer returned', async () => {
+  const cardId = '507f1f77bcf86cd799439012'
+  await withFetch(async (input) => {
+    const url = new URL(input)
+    if (url.pathname.endsWith('/cards')) return response([])
+    return response([{ id: 'archive', date: '2026-10-02T10:00:00.000Z', type: 'updateCard', data: { card: { id: cardId, closed: true }, listBefore: { id: 'backlog' } } }])
+  }, async () => {
+    const history = await getSprintHistory('board', { ...settings, timeZone: 'UTC' }, 'token', 'key')
+    assert.equal(history[0].card.idList, 'backlog')
+    assert.equal(history[0].card.closed, true)
+  })
+})
+
 test('shows a clear retry message for Trello rate limits and reauthorization errors', async () => {
   await withFetch(async () => response({ message: 'Too many requests' }, 429), async () => {
     await assert.rejects(getLists('board', 'token', 'key'), (error) =>

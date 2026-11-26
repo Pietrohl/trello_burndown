@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from 'solid-js'
-import { calculateBurndown, dateInTimeZone, type BurndownPoint } from './history'
+import { calculateBurndown, dateInTimeZone, sprintIsProjected, type BurndownPoint } from './history'
 import { browserTimeZone, normalizeSprintSettings, supportedTimeZones, validateSprintSettings, type SprintSettings } from './settings'
 import { authorize, getLists, getSprintHistory, TrelloApiError } from './trello'
 import type { ChartInstance, TrelloIframe, TrelloList } from './trello-types'
@@ -8,7 +8,7 @@ import './App.css'
 const apiKey = import.meta.env.VITE_TRELLO_API_KEY
 const initialTimeZone = browserTimeZone()
 const timeZones = supportedTimeZones()
-type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'error'
+type View = 'loading' | 'authorize' | 'setup' | 'chart' | 'chart-error' | 'error'
 
 function today() {
   return dateInTimeZone(new Date(), initialTimeZone)
@@ -20,11 +20,11 @@ function addDays(date: string, days: number) {
   return value.toISOString().slice(0, 10)
 }
 
-function BurndownChart(props: { points: BurndownPoint[] }) {
+function BurndownChart(props: { points: BurndownPoint[]; projected: boolean }) {
   let canvas!: HTMLCanvasElement
   let chart: ChartInstance | undefined
 
-  createEffect(() => props.points, (points) => {
+  createEffect(() => [props.points, props.projected] as const, ([points, projected]) => {
     const context = canvas?.getContext('2d')
     if (!context || !window.Chart) return
     chart?.destroy()
@@ -45,7 +45,7 @@ function BurndownChart(props: { points: BurndownPoint[] }) {
             spanGaps: false,
           },
           {
-            label: 'Ideal burndown',
+            label: projected ? 'Projected ideal burndown' : 'Ideal burndown',
             data: points.map(({ ideal }) => ideal),
             borderColor: '#aab4b1',
             borderDash: [6, 6],
@@ -91,8 +91,10 @@ function App() {
   const [inProgressListId, setInProgressListId] = createSignal('')
   const [doneListId, setDoneListId] = createSignal('')
   const [loadedAt, setLoadedAt] = createSignal('')
+  const [savedNotice, setSavedNotice] = createSignal(false)
+  const [projected, setProjected] = createSignal(false)
 
-  async function loadChart(savedSettings: SprintSettings, iframe = t(), returnToSetup = false) {
+  async function loadChart(savedSettings: SprintSettings, iframe = t()) {
     if (!iframe || !apiKey) return false
     setView('loading')
     try {
@@ -100,17 +102,20 @@ function App() {
       const history = await getSprintHistory(boardId(), savedSettings, token, apiKey)
       setPoints(calculateBurndown(savedSettings, history))
       setSettings(savedSettings)
+      setProjected(sprintIsProjected(savedSettings))
       setLoadedAt(new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', timeZone: savedSettings.timeZone }).format(new Date()))
+      setError('')
+      setSavedNotice(false)
       setView('chart')
       return true
     } catch (cause) {
       if (cause instanceof TrelloApiError && cause.status === 401) {
         await (await iframe.getRestApi()).clearToken().catch(() => undefined)
-        setError('Your Trello read authorization expired. Reconnect to continue.')
+        setError(`${savedNotice() ? 'Sprint settings were saved. ' : ''}Your Trello read authorization expired. Reconnect to continue.`)
         setView('authorize')
       } else {
-        setError(cause instanceof Error ? cause.message : 'Could not load the burndown chart.')
-        setView(returnToSetup ? 'setup' : 'error')
+        setError(`${savedNotice() ? 'Sprint settings were saved. ' : ''}${cause instanceof Error ? cause.message : 'Could not load the burndown chart.'}`)
+        setView('chart-error')
       }
       return false
     }
@@ -217,7 +222,10 @@ function App() {
     setSaving(true)
     try {
       await iframe.set('board', 'shared', 'sprintSettings', next)
-      await loadChart(next, iframe, true)
+      setSettings(next)
+      setPoints([])
+      setSavedNotice(true)
+      await loadChart(next, iframe)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save sprint settings. Check that you can edit this board.')
       setView('setup')
@@ -298,7 +306,7 @@ function App() {
             </div>
             <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
             <div class="form-actions">
-              <Show when={settings() && !error()}><button type="button" class="text-button" onClick={() => setView('chart')}>Cancel</button></Show>
+              <Show when={settings() && points().length && !error()}><button type="button" class="text-button" onClick={() => setView('chart')}>Cancel</button></Show>
               <button class="primary-button" type="submit" disabled={saving() || !lists().length}>{saving() ? 'Saving…' : 'Save sprint'}</button>
             </div>
           </form>
@@ -321,15 +329,15 @@ function App() {
           </div>
           <div class="stats-grid">
             <StatCard label="Remaining" value={remainingCount()} detail="In Backlog or In Progress" tone="green" />
-            <StatCard label="Completed" value={latestPoint()?.completed ?? 0} detail="In Done at the latest day" />
-            <StatCard label="Initial-day scope" value={initialCount()} detail="Cards in Backlog or In Progress" />
+            <StatCard label="Completed" value={latestPoint()?.completed ?? 0} detail="In Done after entering during the sprint, including cards created there" />
+            <StatCard label={projected() ? 'Projected initial-day scope' : 'Initial-day scope'} value={initialCount()} detail={projected() ? 'Based on current board state' : 'Cards in Backlog or In Progress'} />
           </div>
           <div class="chart-card">
             <div class="chart-heading">
-              <div><h2>Progress over time</h2><p>Actual card count compared with an ideal pace</p></div>
+              <div><h2>Progress over time</h2><p>{projected() ? 'Projected ideal pace based on current board state' : 'Actual card count compared with an ideal pace'}</p></div>
               <span class="updated-at">Updated {loadedAt()}</span>
             </div>
-            <BurndownChart points={points()} />
+            <BurndownChart points={points()} projected={projected()} />
           </div>
           <div class="workflow-note">
             <span class="workflow-dot" aria-hidden="true"></span>
@@ -337,6 +345,18 @@ function App() {
             <span class="scope-note">Scope changes appear on their activity dates</span>
           </div>
           <p class="history-disclosure">History is reconstructed from activity Trello still provides. Deleted cards or unavailable activity can make past chart values incomplete.</p>
+        </section>
+      </Show>
+
+      <Show when={view() === 'chart-error'}>
+        <section class="center-state error-state">
+          <div class="empty-icon">!</div>
+          <h1>Couldn’t load the chart</h1>
+          <p role="alert">{error()}</p>
+          <div class="form-actions">
+            <button class="secondary-button" onClick={editSettings}>Sprint settings</button>
+            <button class="primary-button" onClick={refresh}>Retry chart</button>
+          </div>
         </section>
       </Show>
 
